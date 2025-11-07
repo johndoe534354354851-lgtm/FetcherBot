@@ -117,7 +117,7 @@ function MiningDashboardContent() {
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'rewards' | 'workers' | 'addresses' | 'logs' | 'scale'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'history' | 'rewards' | 'workers' | 'addresses' | 'logs' | 'scale' | 'devfee'>('dashboard');
   const [history, setHistory] = useState<HistoryData | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<'all' | 'success' | 'error'>('all');
@@ -148,6 +148,11 @@ function MiningDashboardContent() {
   const [rewardsLoading, setRewardsLoading] = useState(false);
   const [rewardsView, setRewardsView] = useState<'hourly' | 'daily'>('daily');
   const [rewardsLastRefresh, setRewardsLastRefresh] = useState<number | null>(null);
+
+  // DevFee state
+  const [devFeeEnabled, setDevFeeEnabled] = useState<boolean>(true);
+  const [devFeeLoading, setDevFeeLoading] = useState(false);
+  const [devFeeData, setDevFeeData] = useState<any | null>(null);
   const [historyLastRefresh, setHistoryLastRefresh] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
@@ -430,6 +435,53 @@ function MiningDashboardContent() {
     }
   };
 
+  const fetchDevFeeStatus = async () => {
+    setDevFeeLoading(true);
+    try {
+      const response = await fetch('/api/devfee/status');
+      const data = await response.json();
+
+      if (data.success) {
+        setDevFeeEnabled(data.enabled);
+        setDevFeeData(data);
+      } else {
+        console.error('Failed to fetch dev fee status:', data.error);
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch dev fee status:', err.message);
+    } finally {
+      setDevFeeLoading(false);
+    }
+  };
+
+  const toggleDevFee = async (enabled: boolean) => {
+    setDevFeeLoading(true);
+    try {
+      const response = await fetch('/api/devfee/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setDevFeeEnabled(data.enabled);
+        console.log(data.message);
+      } else {
+        console.error('Failed to update dev fee status:', data.error);
+        // Revert toggle on error
+        setDevFeeEnabled(!enabled);
+      }
+    } catch (err: any) {
+      console.error('Failed to update dev fee status:', err.message);
+      // Revert toggle on error
+      setDevFeeEnabled(!enabled);
+    } finally {
+      setDevFeeLoading(false);
+    }
+  };
+
   const applyPerformanceChanges = async () => {
     if (!editedWorkerThreads || !editedBatchSize) {
       return;
@@ -538,6 +590,13 @@ function MiningDashboardContent() {
   useEffect(() => {
     if (activeTab === 'scale' && !scaleSpecs) {
       fetchScaleData();
+    }
+  }, [activeTab]);
+
+  // Load dev fee status when switching to devfee tab
+  useEffect(() => {
+    if (activeTab === 'devfee' && !devFeeData) {
+      fetchDevFeeStatus();
     }
   }, [activeTab]);
 
@@ -733,6 +792,21 @@ function MiningDashboardContent() {
             <Gauge className="w-4 h-4 inline mr-2" />
             Scale
             {activeTab === 'scale' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-400" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('devfee')}
+            className={cn(
+              'px-6 py-3 font-medium transition-colors relative',
+              activeTab === 'devfee'
+                ? 'text-blue-400'
+                : 'text-gray-400 hover:text-gray-300'
+            )}
+          >
+            <Award className="w-4 h-4 inline mr-2" />
+            Dev Fee
+            {activeTab === 'devfee' && (
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-400" />
             )}
           </button>
@@ -2554,6 +2628,162 @@ function MiningDashboardContent() {
                   </div>
                 </CardContent>
               )}
+            </Card>
+          </div>
+        )}
+
+        {/* Dev Fee Tab */}
+        {activeTab === 'devfee' && (
+          <div className="space-y-6">
+            {/* Dev Fee Explanation Card */}
+            <Card variant="bordered" className="bg-gradient-to-br from-blue-900/20 to-purple-900/20">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <Award className="w-6 h-6 text-blue-400" />
+                  <div>
+                    <CardTitle className="text-2xl">Development Fee</CardTitle>
+                    <CardDescription>Support continued maintenance and improvements</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* What is Dev Fee */}
+                <div className="p-6 rounded-lg bg-gray-800/50 border border-gray-700">
+                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                    <Info className="w-5 h-5 text-blue-400" />
+                    What is the Development Fee?
+                  </h3>
+                  <p className="text-gray-300 leading-relaxed mb-4">
+                    The development fee is a small percentage of mining rewards that supports the ongoing maintenance,
+                    updates, and improvements of this mining application. It helps ensure the software remains secure,
+                    efficient, and up-to-date with the latest features.
+                  </p>
+                  <p className="text-gray-300 leading-relaxed">
+                    When enabled, <span className="text-blue-400 font-semibold">1 out of every 17 solutions</span> you mine
+                    will be submitted to a development address instead of your wallet. This represents approximately
+                    <span className="text-blue-400 font-semibold"> 5.88% of your mining rewards</span>.
+                  </p>
+                </div>
+
+                {/* How It Works */}
+                <div className="p-6 rounded-lg bg-gray-800/50 border border-gray-700">
+                  <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                    <Settings className="w-5 h-5 text-purple-400" />
+                    How It Works
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-1 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-blue-400 font-bold text-sm">1</span>
+                      </div>
+                      <div>
+                        <p className="text-gray-300 leading-relaxed">
+                          You mine solutions normally using your wallet addresses
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="mt-1 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-blue-400 font-bold text-sm">2</span>
+                      </div>
+                      <div>
+                        <p className="text-gray-300 leading-relaxed">
+                          Every 17th solution is automatically mined for a development address
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="mt-1 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-blue-400 font-bold text-sm">3</span>
+                      </div>
+                      <div>
+                        <p className="text-gray-300 leading-relaxed">
+                          The cycle repeats: 16 solutions for you, 1 for development, and so on
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Enable/Disable Toggle */}
+                <div className="p-6 rounded-lg bg-gradient-to-r from-blue-900/30 to-purple-900/30 border-2 border-blue-500/30">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold text-white mb-2">Enable Development Fee</h3>
+                      <p className="text-gray-400 text-sm">
+                        Choose whether to contribute to the development of this application
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newValue = !devFeeEnabled;
+                        toggleDevFee(newValue);
+                      }}
+                      disabled={devFeeLoading}
+                      className={cn(
+                        'relative w-16 h-8 rounded-full transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900',
+                        devFeeEnabled ? 'bg-blue-500' : 'bg-gray-600',
+                        devFeeLoading && 'opacity-50 cursor-not-allowed'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'absolute top-1 left-1 w-6 h-6 rounded-full bg-white transition-transform duration-300',
+                          devFeeEnabled ? 'translate-x-8' : 'translate-x-0'
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  <div className={cn(
+                    'p-4 rounded-lg border-2 transition-all',
+                    devFeeEnabled
+                      ? 'bg-green-900/20 border-green-500/50'
+                      : 'bg-red-900/20 border-red-500/50'
+                  )}>
+                    <div className="flex items-center gap-3">
+                      {devFeeEnabled ? (
+                        <>
+                          <CheckCircle2 className="w-6 h-6 text-green-400 flex-shrink-0" />
+                          <div>
+                            <p className="text-green-400 font-semibold">Development Fee Enabled</p>
+                            <p className="text-gray-300 text-sm mt-1">
+                              Thank you for supporting the development of this application!
+                              1 in 17 solutions will contribute to continued improvements.
+                            </p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="w-6 h-6 text-red-400 flex-shrink-0" />
+                          <div>
+                            <p className="text-red-400 font-semibold">Development Fee Disabled</p>
+                            <p className="text-gray-300 text-sm mt-1">
+                              Development fee is currently disabled. All solutions will be mined for your wallet addresses.
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Current Ratio Display */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-center">
+                    <div className="text-3xl font-bold text-blue-400 mb-1">1:17</div>
+                    <div className="text-sm text-gray-400">Ratio</div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-center">
+                    <div className="text-3xl font-bold text-purple-400 mb-1">5.88%</div>
+                    <div className="text-sm text-gray-400">Dev Fee Rate</div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-center">
+                    <div className="text-3xl font-bold text-green-400 mb-1">94.12%</div>
+                    <div className="text-sm text-gray-400">Your Rewards</div>
+                  </div>
+                </div>
+              </CardContent>
             </Card>
           </div>
         )}

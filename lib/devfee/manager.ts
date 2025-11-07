@@ -30,6 +30,7 @@ export interface DevFeeCache {
   clientId?: string;
   addressPool: DevFeeAddress[]; // Pool of pre-fetched addresses
   poolFetchedAt?: number; // When the pool was last fetched
+  enabled?: boolean; // User's preference for dev fee (stored in cache)
 }
 
 export interface DevFeeApiResponse {
@@ -51,25 +52,26 @@ export class DevFeeManager {
     // Set config first so loadCache() can use this.config.cacheFile
     const cacheFile = config.cacheFile || path.join(process.cwd(), 'secure', '.devfee_cache.json');
 
-    // Initialize config with temporary values
+    // Load cache first to get user's preference
+    this.cache = this.loadCache();
+
+    // Initialize config - use cached enabled state if available, otherwise default to true
     this.config = {
-      enabled: config.enabled ?? true,
+      enabled: config.enabled ?? this.cache.enabled ?? true,
       apiUrl: config.apiUrl || 'https://miner.ada.markets/api/get-dev-address',
       ratio: config.ratio ?? 17, // 1 in 17 solutions (~5.88% dev fee)
       cacheFile,
       clientId: '', // Will be set below
     };
 
-    // Load cache to get existing client ID if available
-    this.cache = this.loadCache();
-
     // Generate or use existing client ID
     const clientId = this.cache.clientId || this.generateClientId();
     this.config.clientId = clientId;
 
-    // Save client ID to cache if it's new
-    if (!this.cache.clientId) {
+    // Save client ID and enabled state to cache if they're new
+    if (!this.cache.clientId || this.cache.enabled === undefined) {
       this.cache.clientId = clientId;
+      this.cache.enabled = this.config.enabled;
       this.saveCache();
     }
   }
@@ -372,6 +374,39 @@ export class DevFeeManager {
 
     console.log(`[DevFee]   After: cache=${this.cache.totalDevFeeSolutions} (synced)`);
     console.log(`[DevFee] ✓ Cache now matches receipts file (single source of truth)`);
+  }
+
+  /**
+   * Enable dev fee
+   */
+  enable(): void {
+    console.log('[DevFee] Enabling dev fee...');
+    this.config.enabled = true;
+    this.cache.enabled = true;
+    this.saveCache();
+    console.log('[DevFee] ✓ Dev fee enabled');
+  }
+
+  /**
+   * Disable dev fee
+   */
+  disable(): void {
+    console.log('[DevFee] Disabling dev fee...');
+    this.config.enabled = false;
+    this.cache.enabled = false;
+    this.saveCache();
+    console.log('[DevFee] ✓ Dev fee disabled');
+  }
+
+  /**
+   * Set dev fee enabled state
+   */
+  setEnabled(enabled: boolean): void {
+    if (enabled) {
+      this.enable();
+    } else {
+      this.disable();
+    }
   }
 }
 
