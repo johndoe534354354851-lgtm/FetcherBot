@@ -4,11 +4,12 @@
 # ============================================================================
 # This script performs complete setup:
 # 1. Checks/installs Node.js 20.x
-# 2. Checks/installs Rust toolchain
-# 3. Builds optimized hash server with performance improvements
-# 4. Installs all dependencies
-# 5. Builds NextJS application
-# 6. Starts the app
+# 2. Checks/installs build-essential (gcc, g++, etc.)
+# 3. Checks/installs Rust toolchain
+# 4. Builds optimized hash server with performance improvements
+# 5. Installs all dependencies
+# 6. Creates required directories
+# 7. Starts the app
 #
 # NOTE: Builds optimized hash server with +15-38% performance improvement
 # ============================================================================
@@ -68,9 +69,26 @@ else
 fi
 
 # ============================================================================
+# Check Build Tools (C Compiler)
+# ============================================================================
+echo "[2/6] Checking build tools..."
+if ! command -v gcc &> /dev/null; then
+    echo "C compiler (gcc) not found. Installing build-essential..."
+    echo ""
+    sudo apt-get update
+    sudo apt-get install -y build-essential pkg-config libssl-dev
+    echo "Build tools installed!"
+    echo ""
+else
+    echo "Build tools found!"
+    gcc --version | head -n1
+    echo ""
+fi
+
+# ============================================================================
 # Check Rust Installation
 # ============================================================================
-echo "[2/6] Checking Rust installation..."
+echo "[3/6] Checking Rust installation..."
 if ! command -v cargo &> /dev/null; then
     echo "Rust not found. Installing Rust..."
     echo ""
@@ -88,7 +106,7 @@ fi
 # ============================================================================
 # Build Optimized Hash Server
 # ============================================================================
-echo "[3/6] Building optimized hash server..."
+echo "[4/6] Building optimized hash server..."
 echo ""
 echo "Optimizations enabled:"
 echo "  + mimalloc allocator"
@@ -147,7 +165,7 @@ echo ""
 # ============================================================================
 # Install dependencies
 # ============================================================================
-echo "[4/6] Installing project dependencies..."
+echo "[5/6] Installing project dependencies..."
 npm install
 echo "Dependencies installed!"
 echo ""
@@ -155,7 +173,7 @@ echo ""
 # ============================================================================
 # Create required directories
 # ============================================================================
-echo "[5/6] Creating required directories..."
+echo "[6/6] Creating required directories..."
 mkdir -p secure
 mkdir -p storage
 mkdir -p logs
@@ -168,7 +186,7 @@ echo "==========================================================================
 echo "                         Setup Complete!"
 echo "================================================================================"
 echo ""
-echo "[6/6] Starting services..."
+echo "[7/7] Starting services..."
 echo ""
 
 # Stop any existing instances
