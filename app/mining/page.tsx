@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { StatCard } from '@/components/ui/stat-card';
 import { Alert } from '@/components/ui/alert';
 import { Modal } from '@/components/ui/modal';
-import { Play, Square, Home, Loader2, Activity, Clock, Target, Hash, CheckCircle2, Wallet, Terminal, ChevronDown, ChevronUp, Pause, Play as PlayIcon, Maximize2, Minimize2, Cpu, ListChecks, TrendingUp, TrendingDown, Calendar, Copy, Check, XCircle, Users, Award, Zap, MapPin, AlertCircle, Gauge, MemoryStick as Memory, RefreshCw, Settings, Info } from 'lucide-react';
+import { Play, Square, Home, Loader2, Activity, Clock, Target, Hash, CheckCircle2, Wallet, Terminal, ChevronDown, ChevronUp, Pause, Play as PlayIcon, Maximize2, Minimize2, Cpu, ListChecks, TrendingUp, TrendingDown, Calendar, Copy, Check, XCircle, Users, Award, Zap, MapPin, AlertCircle, Gauge, MemoryStick as Memory, RefreshCw, Settings, Info, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface WorkerStats {
@@ -29,6 +29,7 @@ interface MiningStats {
   solutionsFound: number;
   registeredAddresses: number;
   totalAddresses: number;
+  addressesWithReceipts: number;
   hashRate: number;
   uptime: number;
   startTime: number | null;
@@ -135,6 +136,10 @@ function MiningDashboardContent() {
   const [scaleError, setScaleError] = useState<string | null>(null);
   const [editedWorkerThreads, setEditedWorkerThreads] = useState<number | null>(null);
   const [editedBatchSize, setEditedBatchSize] = useState<number | null>(null);
+  const [workerGroupingMode, setWorkerGroupingMode] = useState<'auto' | 'all-on-one' | 'grouped'>('auto');
+  const [workersPerAddress, setWorkersPerAddress] = useState<number>(5);
+  const [initialWorkerGroupingMode, setInitialWorkerGroupingMode] = useState<'auto' | 'all-on-one' | 'grouped'>('auto');
+  const [initialWorkersPerAddress, setInitialWorkersPerAddress] = useState<number>(5);
   const [applyingChanges, setApplyingChanges] = useState(false);
   const [showApplyConfirmation, setShowApplyConfirmation] = useState(false);
 
@@ -160,6 +165,8 @@ function MiningDashboardContent() {
     currentAddress: string;
   } | null>(null);
   const [destinationAddressIndex, setDestinationAddressIndex] = useState<number>(0);
+  const [destinationMode, setDestinationMode] = useState<'wallet' | 'custom'>('wallet');
+  const [customDestinationAddress, setCustomDestinationAddress] = useState<string>('');
   const [consolidatePassword, setConsolidatePassword] = useState<string>('');
   const [consolidateResults, setConsolidateResults] = useState<Array<{
     index: number;
@@ -167,7 +174,33 @@ function MiningDashboardContent() {
     status: 'success' | 'failed' | 'pending' | 'skipped';
     message?: string;
     solutionsConsolidated?: number;
+    consolidationHistory?: Array<{
+      ts: string;
+      destinationAddress: string;
+      solutionsConsolidated: number;
+      status: string;
+    }>;
   }>>([]);
+  const [consolidationHistory, setConsolidationHistory] = useState<any[]>([]);
+
+  // Modal state for consolidation messages
+  const [consolidateModal, setConsolidateModal] = useState<{
+    open: boolean;
+    type: 'confirm' | 'success' | 'error' | 'password';
+    title: string;
+    message: string;
+    onConfirm?: () => void;
+    requirePassword?: boolean;
+  }>({
+    open: false,
+    type: 'success',
+    title: '',
+    message: '',
+    requirePassword: false,
+  });
+  const [modalPassword, setModalPassword] = useState<string>('');
+  const modalPasswordRef = useRef<string>('');
+  const consolidateHandlerRef = useRef<((password: string) => Promise<void>) | null>(null);
 
   // DevFee state
   const [devFeeEnabled, setDevFeeEnabled] = useState<boolean>(true);
@@ -175,6 +208,16 @@ function MiningDashboardContent() {
   const [devFeeData, setDevFeeData] = useState<any | null>(null);
   const [historyLastRefresh, setHistoryLastRefresh] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
+
+  // Helper function to get destination address based on mode
+  const getDestinationAddress = (addresses: any[]) => {
+    if (destinationMode === 'custom') {
+      return customDestinationAddress.trim();
+    } else {
+      const addr = addresses.find((a: any) => a.index === destinationAddressIndex);
+      return addr?.bech32 || '';
+    }
+  };
 
   useEffect(() => {
     // Retrieve password from sessionStorage
@@ -264,7 +307,7 @@ function MiningDashboardContent() {
             hashesComputed: data.hashesComputed,
             hashRate: data.hashRate,
             solutionsFound: data.solutionsFound,
-            startTime: prev.get(data.workerId)?.startTime || Date.now(),
+            startTime: data.startTime,
             lastUpdateTime: Date.now(),
             status: data.status,
             currentChallenge: data.currentChallenge,
@@ -431,6 +474,23 @@ function MiningDashboardContent() {
     }
   };
 
+  const fetchConsolidationHistory = async () => {
+    try {
+      const response = await fetch('/api/consolidate/history');
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch consolidation history');
+      }
+
+      setConsolidationHistory(data.records || []);
+      return data.records || [];
+    } catch (err: any) {
+      console.error('Failed to fetch consolidation history:', err);
+      return [];
+    }
+  };
+
   const fetchScaleData = async () => {
     setScaleLoading(true);
     setScaleError(null);
@@ -447,6 +507,18 @@ function MiningDashboardContent() {
         setEditedBatchSize(data.recommendations.batchSize.current);
       } else {
         setScaleError(data.error || 'Failed to load system specifications');
+      }
+
+      // Also load current worker grouping config
+      const statusResponse = await fetch('/api/mining/status');
+      const statusData = await statusResponse.json();
+      if (statusData.config) {
+        const mode = statusData.config.workerGroupingMode || 'auto';
+        const workers = statusData.config.workersPerAddress || 5;
+        setWorkerGroupingMode(mode);
+        setWorkersPerAddress(workers);
+        setInitialWorkerGroupingMode(mode);
+        setInitialWorkersPerAddress(workers);
       }
     } catch (err: any) {
       setScaleError(err.message || 'Failed to connect to API');
@@ -515,6 +587,8 @@ function MiningDashboardContent() {
         body: JSON.stringify({
           workerThreads: editedWorkerThreads,
           batchSize: editedBatchSize,
+          workerGroupingMode,
+          workersPerAddress,
         }),
       });
 
@@ -545,7 +619,9 @@ function MiningDashboardContent() {
     if (!scaleRecommendations) return false;
     return (
       editedWorkerThreads !== scaleRecommendations.workerThreads.current ||
-      editedBatchSize !== scaleRecommendations.batchSize.current
+      editedBatchSize !== scaleRecommendations.batchSize.current ||
+      workerGroupingMode !== initialWorkerGroupingMode ||
+      workersPerAddress !== initialWorkersPerAddress
     );
   };
 
@@ -574,10 +650,10 @@ function MiningDashboardContent() {
     return `${hours}h ${minutes % 60}m ago`;
   };
 
-  // Load history when switching to history tab and auto-refresh every 30 seconds
+  // Load history when switching to dashboard or history tab and auto-refresh every 30 seconds
   useEffect(() => {
-    if (activeTab === 'history') {
-      // Always fetch when switching to history tab
+    if (activeTab === 'dashboard' || activeTab === 'history') {
+      // Always fetch when switching to dashboard or history tab
       fetchHistory();
 
       // Set up auto-refresh interval
@@ -590,9 +666,9 @@ function MiningDashboardContent() {
     }
   }, [activeTab]);
 
-  // Load rewards when switching to rewards tab
+  // Load rewards when switching to dashboard or rewards tab
   useEffect(() => {
-    if (activeTab === 'rewards') {
+    if (activeTab === 'dashboard' || activeTab === 'rewards') {
       fetchRewards();
     }
   }, [activeTab]);
@@ -615,6 +691,14 @@ function MiningDashboardContent() {
   useEffect(() => {
     if (activeTab === 'devfee') {
       fetchDevFeeStatus();
+    }
+  }, [activeTab]);
+
+  // Load addresses and consolidation history when switching to consolidate tab
+  useEffect(() => {
+    if (activeTab === 'consolidate') {
+      fetchAddresses();
+      fetchConsolidationHistory();
     }
   }, [activeTab]);
 
@@ -920,15 +1004,21 @@ function MiningDashboardContent() {
                           <CheckCircle2 className="w-6 h-6 text-green-400" />
                         </div>
                         <div>
-                          <p className="text-sm text-gray-400 font-medium">Solutions Found</p>
-                          <p className="text-4xl font-bold text-white mt-1">{stats.solutionsFound}</p>
+                          <p className="text-sm text-gray-400 font-medium">Total Solutions</p>
+                          <p className="text-4xl font-bold text-white mt-1">{history?.summary?.totalSolutions || 0}</p>
                         </div>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <p className="text-gray-400">This Hour</p>
-                        <p className="text-lg font-semibold text-white">{stats.solutionsThisHour}</p>
+                        <p className="text-gray-400">Last Hour</p>
+                        <p className="text-lg font-semibold text-white">
+                          {history?.receipts.filter((r: ReceiptEntry) => {
+                            const receiptTime = new Date(r.ts).getTime();
+                            const oneHourAgo = Date.now() - (60 * 60 * 1000);
+                            return receiptTime >= oneHourAgo;
+                          }).length || 0}
+                        </p>
                       </div>
                       <div>
                         <p className="text-gray-400">Today</p>
@@ -976,10 +1066,10 @@ function MiningDashboardContent() {
                 <Card variant="bordered">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
-                      <Clock className="w-5 h-5 text-gray-400" />
+                      <Clock className="w-6 h-6 text-gray-400" />
                       <div>
-                        <p className="text-xs text-gray-500">Uptime</p>
-                        <p className="text-base font-semibold text-white">{formatUptime(stats.uptime)}</p>
+                        <p className="text-sm text-gray-500">Uptime</p>
+                        <p className="text-lg font-semibold text-white">{formatUptime(stats.uptime)}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -988,11 +1078,11 @@ function MiningDashboardContent() {
                 <Card variant="bordered">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
-                      <Wallet className="w-5 h-5 text-gray-400" />
+                      <Wallet className="w-6 h-6 text-gray-400" />
                       <div>
-                        <p className="text-xs text-gray-500">Addresses</p>
-                        <p className="text-base font-semibold text-white">
-                          {stats.registeredAddresses} / {stats.totalAddresses}
+                        <p className="text-sm text-gray-500">Used Addresses</p>
+                        <p className="text-lg font-semibold text-white">
+                          {stats.addressesWithReceipts} / {stats.registeredAddresses}
                         </p>
                       </div>
                     </div>
@@ -1002,10 +1092,10 @@ function MiningDashboardContent() {
                 <Card variant="bordered">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
-                      <TrendingUp className={`w-5 h-5 ${stats.solutionsThisHour >= stats.solutionsPreviousHour ? 'text-green-400' : 'text-gray-400'}`} />
+                      <TrendingUp className={`w-6 h-6 ${stats.solutionsThisHour >= stats.solutionsPreviousHour ? 'text-green-400' : 'text-gray-400'}`} />
                       <div>
-                        <p className="text-xs text-gray-500">Hourly Trend</p>
-                        <p className="text-base font-semibold text-white">
+                        <p className="text-sm text-gray-500">Hourly Trend</p>
+                        <p className="text-lg font-semibold text-white">
                           {stats.solutionsThisHour >= stats.solutionsPreviousHour ? '+' : ''}
                           {stats.solutionsThisHour - stats.solutionsPreviousHour}
                         </p>
@@ -1017,12 +1107,17 @@ function MiningDashboardContent() {
                 <Card variant="bordered">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-3">
-                      <Calendar className={`w-5 h-5 ${stats.solutionsToday >= stats.solutionsYesterday ? 'text-green-400' : 'text-gray-400'}`} />
+                      <Activity className="w-6 h-6 text-blue-400" />
                       <div>
-                        <p className="text-xs text-gray-500">Daily Trend</p>
-                        <p className="text-base font-semibold text-white">
-                          {stats.solutionsToday >= stats.solutionsYesterday ? '+' : ''}
-                          {stats.solutionsToday - stats.solutionsYesterday}
+                        <p className="text-sm text-gray-500">Avg Per Hour</p>
+                        <p className="text-lg font-semibold text-white">
+                          {(() => {
+                            const now = new Date();
+                            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                            const hoursElapsed = Math.max(1, (now.getTime() - startOfDay) / (1000 * 60 * 60));
+                            const avgPerHour = stats.solutionsToday / hoursElapsed;
+                            return avgPerHour.toFixed(1);
+                          })()}
                         </p>
                       </div>
                     </div>
@@ -1074,6 +1169,131 @@ function MiningDashboardContent() {
                   </div>
                 </Alert>
               )}
+
+              {/* Recent Activity Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Last 10 Solutions */}
+                {history && history.receipts && history.receipts.length > 0 && (
+                  <Card variant="bordered">
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-green-400" />
+                        Recent Solutions
+                      </CardTitle>
+                      <CardDescription>Last 10 solutions found</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {history.receipts.slice(0, 10).map((receipt, index) => (
+                          <div
+                            key={index}
+                            className={`flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border transition-colors ${
+                              index === 0
+                                ? 'animate-solution-celebration'
+                                : 'border-gray-700/50 hover:border-green-500/30'
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-400 mb-1">
+                                {new Date(receipt.ts).toLocaleString()}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-white font-mono truncate">
+                                  {receipt.address.slice(0, 20)}...{receipt.address.slice(-8)}
+                                </p>
+                                <a
+                                  href={`https://sm.midnight.gd/api/statistics/${receipt.address}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-gray-400 hover:text-blue-400 transition-colors"
+                                  title="View on Midnight"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              </div>
+                            </div>
+                            <div className="ml-3 text-right">
+                              <p className="text-xs text-gray-500">Index</p>
+                              <p className="text-sm font-semibold text-green-400">
+                                #{receipt.addressIndex ?? '?'}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Rewards Summary (Compact) */}
+                {rewardsData && rewardsData.global && (
+                  <Card variant="bordered">
+                    <CardHeader>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Award className="w-5 h-5 text-purple-400" />
+                        Rewards Summary
+                      </CardTitle>
+                      <CardDescription>Your total rewards earned</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {/* Totals */}
+                      <div className="grid grid-cols-3 gap-3 mb-4">
+                        <div className="text-center p-3 bg-gradient-to-br from-blue-900/20 to-blue-800/10 rounded-lg border border-blue-700/30">
+                          <p className="text-xs text-gray-400 mb-1">Receipts</p>
+                          <p className="text-xl font-bold text-white">
+                            {rewardsData.global.grandTotal.receipts.toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="text-center p-3 bg-gradient-to-br from-green-900/20 to-green-800/10 rounded-lg border border-green-700/30">
+                          <p className="text-xs text-gray-400 mb-1">Addresses</p>
+                          <p className="text-xl font-bold text-white">
+                            {(() => {
+                              const uniqueAddresses = new Set();
+                              rewardsData.global.days.forEach((day: any) => {
+                                if (day.addresses) {
+                                  uniqueAddresses.add(day.addresses);
+                                }
+                              });
+                              return rewardsData.global.days.reduce((acc: number, day: any) => {
+                                return Math.max(acc, day.addresses || 0);
+                              }, 0);
+                            })()}
+                          </p>
+                        </div>
+                        <div className="text-center p-3 bg-gradient-to-br from-purple-900/20 to-purple-800/10 rounded-lg border border-purple-700/30">
+                          <p className="text-xs text-gray-400 mb-1">NIGHT</p>
+                          <p className="text-xl font-bold text-purple-400">
+                            {rewardsData.global.grandTotal.night.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Recent Days */}
+                      <div className="space-y-2">
+                        {/* Table Header */}
+                        <div className="flex items-center px-2.5 pb-2 border-b border-gray-700/50">
+                          <span className="text-sm font-medium text-gray-400 text-left flex-1">Day</span>
+                          <span className="text-sm font-medium text-gray-400 text-center flex-1">Receipts</span>
+                          <span className="text-sm font-medium text-gray-400 text-right flex-1">NIGHT Rewards</span>
+                        </div>
+                        {/* Table Rows */}
+                        {rewardsData.global.days.slice(-5).reverse().map((day: any) => (
+                          <div
+                            key={day.day}
+                            className="flex items-center p-2.5 bg-gray-800/30 rounded border border-gray-700/30 hover:border-purple-500/30 transition-colors"
+                          >
+                            <span className="text-sm font-semibold text-blue-400 text-left flex-1">Day {day.day}</span>
+                            <span className="text-sm text-gray-300 text-center flex-1">{day.receipts.toLocaleString()}</span>
+                            <span className="text-sm text-purple-400 font-semibold font-mono text-right flex-1">
+                              {day.night.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             </>
           </>
         )}
@@ -1270,6 +1490,16 @@ function MiningDashboardContent() {
                                           <Copy className="w-3 h-3" />
                                         )}
                                       </button>
+                                      <a
+                                        href={`https://sm.midnight.gd/api/statistics/${addressHistory.address}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-gray-400 hover:text-blue-400 transition-colors"
+                                        title="View on Midnight"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </a>
                                     </div>
                                     <div className="text-xs text-gray-500">
                                       Challenge: {addressHistory.challengeId.slice(0, 16)}...
@@ -1633,7 +1863,7 @@ function MiningDashboardContent() {
                                   </td>
                                 </tr>
                               ) : (
-                                rewardsData.global.days.map((day: any) => (
+                                [...rewardsData.global.days].reverse().map((day: any) => (
                                   <tr key={day.day} className="text-white hover:bg-blue-500/5 transition-colors">
                                     <td className="py-4 px-4">
                                       <span className="font-bold text-lg text-blue-400">#{day.day}</span>
@@ -1739,7 +1969,8 @@ function MiningDashboardContent() {
                                 worker.status === 'mining' && 'bg-blue-900/10 border-blue-700/50',
                                 worker.status === 'submitting' && 'bg-yellow-900/10 border-yellow-700/50 animate-pulse',
                                 worker.status === 'completed' && 'bg-green-900/10 border-green-700/50',
-                                worker.status === 'idle' && 'bg-gray-900/10 border-gray-700/50'
+                                worker.status === 'idle' && 'bg-gray-900/10 border-gray-700/50',
+                                worker.solutionsFound > 0 && 'ring-2 ring-green-500/30 shadow-lg shadow-green-500/10'
                               )}
                             >
                               <div className="flex items-center gap-4">
@@ -1775,7 +2006,7 @@ function MiningDashboardContent() {
                                         {worker.status === 'idle' && '💤 Idle'}
                                       </span>
                                       {worker.solutionsFound > 0 && (
-                                        <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400">
+                                        <span className="px-2 py-1 rounded text-xs font-medium bg-green-500/20 text-green-400 animate-pulse">
                                           🏆 {worker.solutionsFound} solution{worker.solutionsFound > 1 ? 's' : ''}
                                         </span>
                                       )}
@@ -2035,6 +2266,15 @@ function MiningDashboardContent() {
                                         <Copy className="w-3 h-3" />
                                       )}
                                     </button>
+                                    <a
+                                      href={`https://sm.midnight.gd/api/statistics/${address.bech32}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0"
+                                      title="View on Midnight"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </a>
                                   </div>
                                   <div className="flex items-center gap-2 text-xs">
                                     <span className="text-gray-500">
@@ -2240,6 +2480,89 @@ function MiningDashboardContent() {
                     ))}
                   </div>
                 )}
+
+                {/* Worker Distribution Configuration */}
+                <Card variant="elevated">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Settings className="w-6 h-6 text-blue-400" />
+                      Worker Distribution Strategy
+                    </CardTitle>
+                    <CardDescription>
+                      Configure how workers are assigned to addresses
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-300">Distribution Mode</label>
+                        <select
+                          value={workerGroupingMode}
+                          onChange={(e) => setWorkerGroupingMode(e.target.value as any)}
+                          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="auto">Auto (Recommended)</option>
+                          <option value="all-on-one">All Workers on One Address</option>
+                          <option value="grouped">Custom Groups</option>
+                        </select>
+                      </div>
+
+                      {workerGroupingMode === 'grouped' && (
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-gray-300">
+                            Min Workers per Address
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max={editedWorkerThreads || 11}
+                            value={workersPerAddress}
+                            onChange={(e) => setWorkersPerAddress(Math.max(1, Math.min(editedWorkerThreads || 256, parseInt(e.target.value) || 1)))}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-gray-300">Parallel Groups</label>
+                        <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-2 text-center">
+                          <span className="text-2xl font-bold text-blue-400">
+                            {workerGroupingMode === 'all-on-one' ? 1 : Math.floor((editedWorkerThreads || 11) / (workerGroupingMode === 'grouped' ? workersPerAddress : 5))}
+                          </span>
+                          <span className="text-sm text-gray-400 ml-2">(addresses at once)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {workerGroupingMode === 'auto' && (
+                      <Alert variant="info">
+                        <Info className="w-4 h-4" />
+                        <span className="text-sm">
+                          Auto mode uses ~5 workers per address for optimal balance between speed and parallelization.
+                        </span>
+                      </Alert>
+                    )}
+
+                    {workerGroupingMode === 'all-on-one' && (
+                      <Alert variant="info">
+                        <Info className="w-4 h-4" />
+                        <span className="text-sm">
+                          All workers focus on ONE address at a time for maximum solving speed per address.
+                        </span>
+                      </Alert>
+                    )}
+
+                    {workerGroupingMode === 'grouped' && (
+                      <Alert variant="info">
+                        <Info className="w-4 h-4" />
+                        <span className="text-sm">
+                          With {editedWorkerThreads || 11} workers and min {workersPerAddress}:
+                          <strong> {Math.floor((editedWorkerThreads || 11) / workersPerAddress)} addresses mining in parallel</strong>
+                        </span>
+                      </Alert>
+                    )}
+                  </CardContent>
+                </Card>
 
                 {/* Recommendations - Visual Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2499,6 +2822,128 @@ function MiningDashboardContent() {
         {/* Consolidate Tab */}
         {activeTab === 'consolidate' && (
           <div className="space-y-6">
+            {/* Warning Banner */}
+            <Alert variant="warning" className="bg-gradient-to-r from-yellow-900/40 to-amber-900/40 border-2 border-yellow-600/60">
+              <div className="flex items-start gap-4">
+                <AlertCircle className="w-8 h-8 text-yellow-400 flex-shrink-0 mt-1" />
+                <div className="space-y-3 flex-1">
+                  <div>
+                    <h3 className="text-lg font-bold text-yellow-400 mb-2">⚠️ Feature Under Testing</h3>
+                    <div className="space-y-2 text-sm text-gray-200 leading-relaxed">
+                      <p>
+                        <strong>This consolidation feature has been fully implemented to the Midnight specification.</strong> The code is complete,
+                        transactions are being signed correctly, and we are receiving confirmations from the Midnight API.
+                      </p>
+                      <p>
+                        However, we are still awaiting <strong>final confirmation from Midnight</strong> and conducting <strong>additional testing</strong> to
+                        ensure everything works as expected in production. All consolidations are logged for verification.
+                      </p>
+                      <p className="text-yellow-300 font-semibold">
+                        We recommend waiting until testing is complete before using this feature.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-yellow-700/30">
+                    <p className="text-xs text-gray-300">
+                      <strong>Updates will be announced on X:</strong>{' '}
+                      <a
+                        href="https://x.com/cwpaulm"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 underline"
+                      >
+                        @cwpaulm
+                      </a>
+                      {' • '}
+                      <a
+                        href="https://x.com/PoolShamrock"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:text-blue-300 underline"
+                      >
+                        @PoolShamrock
+                      </a>
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2 italic">
+                      If you choose to use this feature now, you do so at your own discretion.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </Alert>
+
+            {/* Info Card */}
+            <Card variant="bordered" className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 border-blue-700/50">
+              <CardHeader>
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-blue-500/20 rounded-lg">
+                    <Info className="w-5 h-5 text-blue-400" />
+                  </div>
+                  <div className="flex-1">
+                    <CardTitle className="text-lg">What is Reward Consolidation?</CardTitle>
+                    <CardDescription>Learn how to consolidate your rewards from multiple addresses</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                    <h3 className="font-semibold text-white mb-2 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-400" />
+                      How It Works
+                    </h3>
+                    <p className="text-sm text-gray-300 leading-relaxed">
+                      When mining, you use multiple addresses to find solutions. Consolidation allows you to combine all rewards
+                      from these addresses into a single destination address, making it easier to redeem your NIGHT tokens later.
+                    </p>
+                  </div>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                      <h3 className="font-semibold text-white mb-2 flex items-center gap-2">
+                        <Wallet className="w-4 h-4 text-blue-400" />
+                        Wallet Address (Index)
+                      </h3>
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        Select an address from your current wallet by index number (0-199). For example, index 0 is your first
+                        mining address. This is the default and most common option.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                      <h3 className="font-semibold text-white mb-2 flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-purple-400" />
+                        External Address
+                      </h3>
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        Enter any Cardano address (addr1...). Use this if you're running multiple miners and want to consolidate
+                        everything to a single address from another wallet.
+                      </p>
+                    </div>
+                  </div>
+
+                  <Alert variant="warning">
+                    <AlertCircle className="w-4 h-4" />
+                    <div>
+                      <p className="font-semibold mb-1">Important Notes</p>
+                      <ul className="text-sm space-y-1 list-disc list-inside">
+                        <li>All past and future solutions from source addresses will be assigned to the destination</li>
+                        <li>You should consolidate before claiming your NIGHT tokens</li>
+                        <li>Your password is used to sign transactions securely in your browser</li>
+                      </ul>
+                    </div>
+                  </Alert>
+
+                  <div className="p-4 bg-gradient-to-r from-green-900/30 to-emerald-900/30 rounded-lg border border-green-700/50">
+                    <p className="text-sm text-gray-300">
+                      <strong className="text-green-400">💡 Tip:</strong> Most users should use <strong>index 0</strong> as their
+                      destination address. Only use an external address if you're consolidating from multiple miners or wallets.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Configuration Card */}
             <Card variant="bordered">
               <CardHeader>
@@ -2507,47 +2952,84 @@ function MiningDashboardContent() {
                   Consolidate Rewards
                 </CardTitle>
                 <CardDescription>
-                  Consolidate all rewards to address index {destinationAddressIndex} - Runs continuously until stopped
+                  Consolidate all rewards to your chosen destination - Runs continuously until stopped
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Destination Address Index
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max={stats?.totalAddresses ? stats.totalAddresses - 1 : 199}
-                        value={destinationAddressIndex}
-                        onChange={(e) => setDestinationAddressIndex(parseInt(e.target.value) || 0)}
+                  {/* Destination Mode Selector */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Destination Type
+                    </label>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => setDestinationMode('wallet')}
                         disabled={consolidateLoading}
-                        className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                        placeholder="0"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        All rewards consolidate here
-                      </p>
+                        className={cn(
+                          'flex-1 px-4 py-2 rounded-lg border-2 transition-all',
+                          destinationMode === 'wallet'
+                            ? 'bg-blue-500/20 border-blue-500 text-blue-400'
+                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600',
+                          consolidateLoading && 'opacity-50 cursor-not-allowed'
+                        )}
+                      >
+                        <Wallet className="w-4 h-4 inline mr-2" />
+                        Address from this wallet
+                      </button>
+                      <button
+                        onClick={() => setDestinationMode('custom')}
+                        disabled={consolidateLoading}
+                        className={cn(
+                          'flex-1 px-4 py-2 rounded-lg border-2 transition-all',
+                          destinationMode === 'custom'
+                            ? 'bg-purple-500/20 border-purple-500 text-purple-400'
+                            : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600',
+                          consolidateLoading && 'opacity-50 cursor-not-allowed'
+                        )}
+                      >
+                        <MapPin className="w-4 h-4 inline mr-2" />
+                        External address
+                      </button>
                     </div>
+                  </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-2">
-                        Wallet Password
-                      </label>
-                      <input
-                        type="password"
-                        value={consolidatePassword}
-                        onChange={(e) => setConsolidatePassword(e.target.value)}
-                        disabled={consolidateLoading}
-                        className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                        placeholder="Enter password"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Required to sign transactions
-                      </p>
-                    </div>
+                  {/* Destination Address Input - Changes based on mode */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      {destinationMode === 'wallet' ? 'Destination Address Index' : 'Destination Address'}
+                    </label>
+                    {destinationMode === 'wallet' ? (
+                      <>
+                        <input
+                          type="number"
+                          min="0"
+                          max={stats?.totalAddresses ? stats.totalAddresses - 1 : 199}
+                          value={destinationAddressIndex}
+                          onChange={(e) => setDestinationAddressIndex(parseInt(e.target.value) || 0)}
+                          disabled={consolidateLoading}
+                          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                          placeholder="0"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          All rewards consolidate to this address in your wallet
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={customDestinationAddress}
+                          onChange={(e) => setCustomDestinationAddress(e.target.value)}
+                          disabled={consolidateLoading}
+                          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+                          placeholder="addr1..."
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Enter any Cardano address (can be from another wallet)
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex gap-3">
@@ -2555,51 +3037,104 @@ function MiningDashboardContent() {
 
                     <Button
                       onClick={async () => {
-                      }} disabled={true}
-                      className="flex-1"
-                    >
-                      <>
-                        <Play className="w-4 h-4 mr-2" />
-                        DISABLED - Start Continuous Consolidation
-                      </>
-                    </Button>
-
-                    {/* <Button
-                      onClick={async () => {
-                        if (!consolidatePassword) {
-                          alert('Please enter your wallet password');
-                          return;
+                        // Validate destination address for custom mode
+                        if (destinationMode === 'custom') {
+                          if (!customDestinationAddress.trim()) {
+                            setConsolidateModal({
+                              open: true,
+                              type: 'error',
+                              title: 'Address Required',
+                              message: 'Please enter a destination address.',
+                            });
+                            return;
+                          }
+                          if (!customDestinationAddress.startsWith('addr1')) {
+                            setConsolidateModal({
+                              open: true,
+                              type: 'error',
+                              title: 'Invalid Address',
+                              message: 'Please enter a valid Cardano mainnet address (starting with addr1).',
+                            });
+                            return;
+                          }
                         }
 
-                        setConsolidateLoading(true);
-                        consolidateRunningRef.current = true;
-                        setConsolidateResults([]);
+                        // Store the consolidation handler
+                        consolidateHandlerRef.current = async (password: string) => {
+                          setConsolidateLoading(true);
+                          consolidateRunningRef.current = true;
+                          setConsolidateResults([]);
 
-                        try {
-                          console.log('[Consolidate] Loading wallet addresses...');
-                          // Load wallet addresses with password
-                          const statusResponse = await fetch('/api/consolidate/status', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ password: consolidatePassword }),
-                          });
+                          try {
+                            console.log('[Consolidate] Starting consolidation...');
 
-                          const statusData = await statusResponse.json();
-
-                          if (!statusData.addresses) {
-                            throw new Error(statusData.error || 'Failed to load addresses');
+                          // Use addresses from addressesData (already loaded without password)
+                          if (!addressesData || !addressesData.addresses) {
+                            throw new Error('Addresses not loaded. Please refresh the page.');
                           }
 
-                          const addresses = statusData.addresses;
-                          console.log(`[Consolidate] Loaded ${addresses.length} addresses`);
+                          const addresses = addressesData.addresses;
+                          console.log(`[Consolidate] Using ${addresses.length} addresses`);
 
-                          // Initialize all addresses as pending (except destination)
-                          setConsolidateResults(addresses.map((addr: any) => ({
-                            index: addr.index,
-                            address: addr.bech32,
-                            status: addr.index === destinationAddressIndex ? 'skipped' : 'pending',
-                            message: addr.index === destinationAddressIndex ? 'Destination address' : '',
-                          })));
+                          // Get destination address
+                          const destinationAddress = getDestinationAddress(addresses);
+                          if (!destinationAddress) {
+                            throw new Error('Invalid destination address');
+                          }
+
+                          // Fetch consolidation history to check which addresses have been consolidated
+                          const historyRecords = await fetchConsolidationHistory();
+
+                          // Initialize all addresses as pending (except destination in wallet mode)
+                          setConsolidateResults(addresses.map((addr: any) => {
+                            const addressHistory = historyRecords.filter((r: any) => r.sourceAddress === addr.bech32);
+                            return {
+                              index: addr.index,
+                              address: addr.bech32,
+                              status: (destinationMode === 'wallet' && addr.index === destinationAddressIndex) ? 'skipped' : 'pending',
+                              message: (destinationMode === 'wallet' && addr.index === destinationAddressIndex) ? 'Destination address' : '',
+                              consolidationHistory: addressHistory,
+                            };
+                          }));
+
+                          // Prepare addresses for batch signing (exclude destination)
+                          const addressesToSign = addresses.filter((addr: any) => {
+                            if (destinationMode === 'wallet' && addr.index === destinationAddressIndex) {
+                              return false;
+                            }
+                            if (destinationMode === 'custom' && addr.bech32 === destinationAddress) {
+                              return false;
+                            }
+                            return true;
+                          });
+
+                          console.log(`[Consolidate] Batch signing ${addressesToSign.length} addresses...`);
+
+                          // Batch sign all addresses at once
+                          const batchSignResponse = await fetch('/api/wallet/sign-batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              password,
+                              addresses: addressesToSign.map((addr: any) => ({
+                                sourceAddressIndex: addr.index,
+                                sourceAddress: addr.bech32,
+                                destinationAddress: destinationAddress,
+                              })),
+                            }),
+                          });
+
+                          const batchSignData = await batchSignResponse.json();
+                          if (!batchSignData.success) {
+                            throw new Error(batchSignData.error || 'Failed to sign messages');
+                          }
+
+                          // Create a map of signatures by address index for quick lookup
+                          const signatureMap = new Map(
+                            batchSignData.signatures.map((s: any) => [s.sourceAddressIndex, s.signature])
+                          );
+
+                          console.log(`[Consolidate] Batch signing complete. Starting submissions...`);
 
                           // Continuous loop using ref
                           let cycleCount = 0;
@@ -2610,16 +3145,11 @@ function MiningDashboardContent() {
                             let successCount = 0;
                             let failCount = 0;
                             let current = 0;
-                            const total = addresses.length - 1;
+                            const total = addressesToSign.length;
 
-                            for (const addr of addresses) {
+                            for (const addr of addressesToSign) {
                               // Check if user stopped using ref
                               if (!consolidateRunningRef.current) break;
-
-                              // Skip destination
-                              if (addr.index === destinationAddressIndex) {
-                                continue;
-                              }
 
                               current++;
                               setConsolidateProgress({
@@ -2631,14 +3161,24 @@ function MiningDashboardContent() {
                               });
 
                               try {
-                                console.log(`[Consolidate] Processing address ${addr.index}...`);
+                                console.log(`[Consolidate] Submitting address ${addr.index}...`);
+
+                                const signature = signatureMap.get(addr.index);
+                                if (!signature) {
+                                  throw new Error('Signature not found for this address');
+                                }
+
+                                // Submit signature to Midnight API
                                 const donateResponse = await fetch('/api/consolidate/donate', {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({
-                                    password: consolidatePassword,
+                                    sourceAddress: addr.bech32,
                                     sourceIndex: addr.index,
-                                    destinationIndex: destinationAddressIndex,
+                                    destinationAddress: destinationAddress,
+                                    destinationIndex: destinationMode === 'wallet' ? destinationAddressIndex : undefined,
+                                    destinationMode,
+                                    signature,
                                   }),
                                 });
 
@@ -2646,17 +3186,24 @@ function MiningDashboardContent() {
 
                                 if (donateData.success) {
                                   successCount++;
+
+                                  // Refresh consolidation history
+                                  const updatedHistory = await fetchConsolidationHistory();
+
                                   setConsolidateResults(prev =>
-                                    prev.map(r =>
-                                      r.index === addr.index
-                                        ? {
-                                            ...r,
-                                            status: 'success',
-                                            message: donateData.message,
-                                            solutionsConsolidated: donateData.solutionsConsolidated
-                                          }
-                                        : r
-                                    )
+                                    prev.map(r => {
+                                      if (r.index === addr.index) {
+                                        const addressHistory = updatedHistory.filter((h: any) => h.sourceAddress === addr.bech32);
+                                        return {
+                                          ...r,
+                                          status: 'success',
+                                          message: donateData.message,
+                                          solutionsConsolidated: donateData.solutionsConsolidated,
+                                          consolidationHistory: addressHistory,
+                                        };
+                                      }
+                                      return r;
+                                    })
                                   );
                                 } else {
                                   failCount++;
@@ -2701,14 +3248,36 @@ function MiningDashboardContent() {
                           }
                         } catch (error: any) {
                           console.error('[Consolidate] Error:', error);
-                          alert(`Error: ${error.message}`);
+                          setConsolidateModal({
+                            open: true,
+                            type: 'error',
+                            title: 'Consolidation Error',
+                            message: error.message || 'An error occurred during consolidation.',
+                          });
                         } finally {
                           setConsolidateLoading(false);
                           consolidateRunningRef.current = false;
                           setConsolidateProgress(null);
                         }
+                      };
+
+                      // Show password modal
+                      setModalPassword('');
+                      modalPasswordRef.current = '';
+                      setConsolidateModal({
+                          open: true,
+                          type: 'password',
+                          title: 'Start Continuous Consolidation',
+                          message: 'Enter your wallet password to begin consolidating rewards from all addresses.',
+                          requirePassword: true,
+                          onConfirm: async () => {
+                            if (consolidateHandlerRef.current && modalPasswordRef.current) {
+                              await consolidateHandlerRef.current(modalPasswordRef.current);
+                            }
+                          },
+                        });
                       }}
-                      disabled={consolidateLoading || !consolidatePassword}
+                      disabled={consolidateLoading}
                       className="flex-1"
                     >
                       {consolidateLoading ? (
@@ -2722,7 +3291,7 @@ function MiningDashboardContent() {
                           Start Continuous Consolidation
                         </>
                       )}
-                    </Button> */}
+                    </Button>
 
                     {consolidateLoading && (
                       <Button
@@ -2797,6 +3366,7 @@ function MiningDashboardContent() {
                         <th className="text-left p-3 text-gray-400 font-medium">Address</th>
                         <th className="text-center p-3 text-gray-400 font-medium">Status</th>
                         <th className="text-left p-3 text-gray-400 font-medium">Details</th>
+                        <th className="text-center p-3 text-gray-400 font-medium">History</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2848,11 +3418,246 @@ function MiningDashboardContent() {
                             {result.status === 'pending' && <span className="text-gray-500">Waiting...</span>}
                             {result.status === 'skipped' && <span className="text-blue-400">Skip</span>}
                           </td>
+                          <td className="p-3 text-center">
+                            {result.consolidationHistory && result.consolidationHistory.length > 0 ? (
+                              (() => {
+                                const lastSuccess = result.consolidationHistory
+                                  .filter(h => h.status === 'success')
+                                  .slice(-1)[0];
+                                if (lastSuccess) {
+                                  return (
+                                    <div className="text-xs text-green-400 font-mono">
+                                      ✓ Consolidated → {lastSuccess.destinationAddress.slice(0, 8)}...{lastSuccess.destinationAddress.slice(-6)}
+                                    </div>
+                                  );
+                                }
+                                return <span className="text-xs text-gray-500">—</span>;
+                              })()
+                            ) : (
+                              <span className="text-xs text-gray-500">—</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Individual Address Consolidation */}
+            <Card variant="bordered">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-purple-400" />
+                  Individual Address Consolidation
+                </CardTitle>
+                <CardDescription>Manually consolidate specific addresses for testing</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {addressesData && addressesData.addresses ? (
+                  <div className="space-y-4">
+                    {/* Destination Selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Destination Address Index
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={addressesData.addresses.length - 1}
+                        value={destinationAddressIndex}
+                        onChange={(e) => setDestinationAddressIndex(parseInt(e.target.value) || 0)}
+                        className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="0"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        All selected addresses will consolidate to this address
+                      </p>
+                    </div>
+
+                    {/* Address List with Action Buttons */}
+                    <div className="max-h-[400px] overflow-y-auto space-y-2">
+                      {addressesData.addresses.map((address: any) => (
+                        <div
+                          key={address.index}
+                          className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700/50"
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="flex-shrink-0 w-10 h-10 rounded bg-gray-700 flex items-center justify-center">
+                              <span className="text-sm font-bold text-gray-300">#{address.index}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-white font-mono truncate">
+                                  {address.bech32.slice(0, 20)}...{address.bech32.slice(-8)}
+                                </span>
+                                <a
+                                  href={`https://sm.midnight.gd/api/statistics/${address.bech32}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0"
+                                  title="View on Midnight"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </div>
+                              <p className="text-xs text-gray-500">
+                                Solutions: {address.totalSolutions || 0}
+                              </p>
+                              {(() => {
+                                const addressHistory = consolidationHistory.filter(
+                                  (r: any) => r.sourceAddress === address.bech32 && r.status === 'success'
+                                );
+                                if (addressHistory.length > 0) {
+                                  const lastConsolidation = addressHistory[addressHistory.length - 1];
+                                  return (
+                                    <div className="mt-1">
+                                      <p className="text-xs text-green-400 font-mono">
+                                        ✓ Consolidated → {lastConsolidation.destinationAddress.slice(0, 12)}...{lastConsolidation.destinationAddress.slice(-8)}
+                                      </p>
+                                    </div>
+                                  );
+                                }
+                              })()}
+                            </div>
+                          </div>
+                          <Button
+                            onClick={async () => {
+                              // Get destination address
+                              const destAddress = getDestinationAddress(addressesData.addresses);
+                              if (!destAddress) {
+                                setConsolidateModal({
+                                  open: true,
+                                  type: 'error',
+                                  title: 'Invalid Destination',
+                                  message: 'Please select a valid destination address.',
+                                });
+                                return;
+                              }
+
+                              if (address.bech32 === destAddress) {
+                                setConsolidateModal({
+                                  open: true,
+                                  type: 'error',
+                                  title: 'Invalid Operation',
+                                  message: 'Cannot consolidate an address to itself.',
+                                });
+                                return;
+                              }
+
+                              const destLabel = destinationMode === 'custom'
+                                ? `custom address ${destAddress.slice(0, 12)}...`
+                                : `address #${destinationAddressIndex}`;
+
+                              // Store the consolidation handler
+                              consolidateHandlerRef.current = async (password: string) => {
+                                try {
+                                  // Sign the donation message server-side (keeps seed phrase secure)
+                                  const signResponse = await fetch('/api/wallet/sign', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      password,
+                                      sourceAddressIndex: address.index,
+                                      sourceAddress: address.bech32,
+                                      destinationAddress: destAddress,
+                                    }),
+                                  });
+
+                                    const signData = await signResponse.json();
+                                    if (!signData.success) {
+                                      setConsolidateModal({
+                                        open: true,
+                                        type: 'error',
+                                        title: 'Authentication Error',
+                                        message: signData.error || 'Failed to sign message.',
+                                      });
+                                      return;
+                                    }
+
+                                    // Send signature to backend
+                                    const donateResponse = await fetch('/api/consolidate/donate', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        sourceAddress: address.bech32,
+                                        sourceIndex: address.index,
+                                        destinationAddress: destAddress,
+                                        destinationIndex: destinationMode === 'wallet' ? destinationAddressIndex : undefined,
+                                        destinationMode,
+                                        signature: signData.signature,
+                                      }),
+                                    });
+
+                                    const donateData = await donateResponse.json();
+
+                                    if (donateData.success) {
+                                      // Refresh consolidation history after successful consolidation
+                                      await fetchConsolidationHistory();
+
+                                      setConsolidateModal({
+                                        open: true,
+                                        type: 'success',
+                                        title: 'Success!',
+                                        message: `Consolidated ${donateData.solutionsConsolidated || 0} solutions from address #${address.index} to ${destLabel}.`,
+                                      });
+                                    } else {
+                                      setConsolidateModal({
+                                        open: true,
+                                        type: 'error',
+                                        title: 'Consolidation Failed',
+                                        message: donateData.error || 'Failed to consolidate address.',
+                                      });
+                                    }
+                                  } catch (err: any) {
+                                    console.error('[Consolidate] Error:', err);
+                                    setConsolidateModal({
+                                      open: true,
+                                      type: 'error',
+                                      title: 'Error',
+                                      message: err.message || 'An error occurred during consolidation.',
+                                    });
+                                  }
+                                };
+
+                              // Show password modal
+                              setModalPassword('');
+                              modalPasswordRef.current = '';
+                              setConsolidateModal({
+                                open: true,
+                                type: 'password',
+                                title: 'Confirm Consolidation',
+                                message: `Consolidate address #${address.index} to ${destLabel}?\n\nEnter your wallet password to continue.`,
+                                requirePassword: true,
+                                onConfirm: async () => {
+                                  if (consolidateHandlerRef.current && modalPasswordRef.current) {
+                                    await consolidateHandlerRef.current(modalPasswordRef.current);
+                                  }
+                                },
+                              });
+                            }}
+                            size="sm"
+                            variant="outline"
+                            className="flex-shrink-0"
+                            disabled={address.index === destinationAddressIndex}
+                          >
+                            {address.index === destinationAddressIndex ? 'Destination' : 'Consolidate'}
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : addressesLoading ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto mb-2" />
+                    <p className="text-gray-400">Loading addresses...</p>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p>No addresses found. Please start mining at least once to generate addresses.</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -3186,7 +3991,7 @@ function MiningDashboardContent() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-center">
                     <div className="text-3xl font-bold text-blue-400 mb-1">1:17</div>
-                    <div className="text-sm text-gray-400">Ratio</div>
+                    <div className="text-sm text-gray-400">Target Ratio</div>
                   </div>
                   <div className="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-center">
                     <div className="text-3xl font-bold text-purple-400 mb-1">5.88%</div>
@@ -3197,11 +4002,90 @@ function MiningDashboardContent() {
                     <div className="text-sm text-gray-400">Your Rewards</div>
                   </div>
                 </div>
+
               </CardContent>
             </Card>
           </div>
         )}
       </div>
+
+      {/* Consolidation Modal */}
+      <Modal
+        isOpen={consolidateModal.open}
+        onClose={() => {
+          setConsolidateModal(prev => ({ ...prev, open: false }));
+          setModalPassword('');
+          modalPasswordRef.current = '';
+        }}
+        title={consolidateModal.title}
+      >
+        <div className="space-y-4">
+          <p className="text-gray-300 whitespace-pre-line">{consolidateModal.message}</p>
+
+          {consolidateModal.type === 'password' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Wallet Password
+              </label>
+              <input
+                type="password"
+                value={modalPassword}
+                onChange={(e) => {
+                  setModalPassword(e.target.value);
+                  modalPasswordRef.current = e.target.value;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && modalPasswordRef.current && consolidateModal.onConfirm) {
+                    consolidateModal.onConfirm();
+                  }
+                }}
+                autoFocus
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter password"
+              />
+            </div>
+          )}
+
+          <div className="flex gap-3 justify-end">
+            {consolidateModal.type === 'confirm' || consolidateModal.type === 'password' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setConsolidateModal(prev => ({ ...prev, open: false }));
+                    setModalPassword('');
+                    modalPasswordRef.current = '';
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={consolidateModal.type === 'password' && !modalPassword}
+                  onClick={async () => {
+                    if (consolidateModal.onConfirm) {
+                      await consolidateModal.onConfirm();
+                    }
+                  }}
+                >
+                  Confirm
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant={consolidateModal.type === 'error' ? 'default' : 'primary'}
+                onClick={() => {
+                  setConsolidateModal(prev => ({ ...prev, open: false }));
+                  setModalPassword('');
+                  modalPasswordRef.current = '';
+                }}
+              >
+                OK
+              </Button>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div >
   );
 }

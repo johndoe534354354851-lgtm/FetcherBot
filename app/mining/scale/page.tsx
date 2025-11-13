@@ -67,9 +67,71 @@ export default function ScalePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Worker grouping settings
+  const [workerGroupingMode, setWorkerGroupingMode] = useState<'auto' | 'all-on-one' | 'grouped'>('auto');
+  const [workersPerAddress, setWorkersPerAddress] = useState<number>(5);
+  const [workerThreads, setWorkerThreads] = useState<number>(11);
+  const [batchSize, setBatchSize] = useState<number>(300);
+  const [updating, setUpdating] = useState(false);
+  const [updateSuccess, setUpdateSuccess] = useState(false);
+
   useEffect(() => {
     loadSystemSpecs();
+    loadCurrentConfig();
   }, []);
+
+  const loadCurrentConfig = async () => {
+    try {
+      const response = await fetch('/api/mining/status');
+      const data = await response.json();
+      if (data.config) {
+        setWorkerGroupingMode(data.config.workerGroupingMode || 'auto');
+        setWorkersPerAddress(data.config.workersPerAddress || 5);
+        setWorkerThreads(data.config.workerThreads || 11);
+        setBatchSize(data.config.batchSize || 300);
+      }
+    } catch (err) {
+      console.error('Failed to load current config:', err);
+    }
+  };
+
+  const handleUpdateConfig = async () => {
+    setUpdating(true);
+    setUpdateSuccess(false);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/mining/update-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workerThreads,
+          batchSize,
+          workerGroupingMode,
+          workersPerAddress,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setUpdateSuccess(true);
+        setTimeout(() => setUpdateSuccess(false), 3000);
+      } else {
+        setError(data.error || 'Failed to update configuration');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to update configuration');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const calculateGroupCount = () => {
+    if (workerGroupingMode === 'all-on-one') return 1;
+    const minWorkers = workerGroupingMode === 'grouped' ? workersPerAddress : 5;
+    return Math.floor(workerThreads / minWorkers);
+  };
 
   const loadSystemSpecs = async () => {
     setLoading(true);
@@ -280,6 +342,177 @@ export default function ScalePage() {
             ))}
           </div>
         )}
+
+        {/* Worker Distribution Configuration */}
+        <Card variant="elevated">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="w-6 h-6 text-blue-400" />
+              Worker Distribution Strategy
+            </CardTitle>
+            <CardDescription>
+              Configure how workers are assigned to addresses
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Current Settings Display */}
+            <div className="p-4 bg-blue-900/20 border border-blue-700/50 rounded-lg">
+              <p className="text-sm font-semibold text-blue-300 mb-2">Current Settings</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div>
+                  <span className="text-gray-400">Mode: </span>
+                  <span className="text-white font-medium">
+                    {workerGroupingMode === 'auto' ? 'Auto' : workerGroupingMode === 'all-on-one' ? 'All-on-One' : 'Custom Groups'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Workers per Address: </span>
+                  <span className="text-white font-medium">
+                    {workerGroupingMode === 'all-on-one'
+                      ? `${workerThreads} (all)`
+                      : workerGroupingMode === 'grouped'
+                        ? `${workersPerAddress}`
+                        : '~5 (auto)'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Addresses in Parallel: </span>
+                  <span className="text-white font-medium">{calculateGroupCount()}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-gray-300">Mode</label>
+              <select
+                value={workerGroupingMode}
+                onChange={(e) => setWorkerGroupingMode(e.target.value as any)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="auto">Auto (Recommended)</option>
+                <option value="all-on-one">All Workers on One Address</option>
+                <option value="grouped">Custom Groups</option>
+              </select>
+            </div>
+
+            {workerGroupingMode === 'grouped' && (
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-300">
+                  Minimum Workers per Address
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={workerThreads}
+                  value={workersPerAddress}
+                  onChange={(e) => setWorkersPerAddress(Math.max(1, Math.min(workerThreads, parseInt(e.target.value) || 1)))}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-sm text-gray-400">
+                  With {workerThreads} workers at min {workersPerAddress}:
+                  <strong className="text-white"> {calculateGroupCount()} addresses in parallel</strong>
+                </p>
+              </div>
+            )}
+
+            {workerGroupingMode === 'auto' && (
+              <Alert variant="info">
+                <Info className="w-4 h-4" />
+                <span className="text-sm">
+                  Auto mode uses ~5 workers per address. With {workerThreads} workers: <strong>{calculateGroupCount()} addresses in parallel</strong>
+                </span>
+              </Alert>
+            )}
+
+            {workerGroupingMode === 'all-on-one' && (
+              <Alert variant="info">
+                <Info className="w-4 h-4" />
+                <span className="text-sm">
+                  All {workerThreads} workers will focus on ONE address at a time for maximum solving speed per address.
+                </span>
+              </Alert>
+            )}
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-300">Worker Threads</label>
+              <input
+                type="number"
+                min="1"
+                max="256"
+                value={workerThreads}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setWorkerThreads('' as any);
+                  } else {
+                    setWorkerThreads(Math.max(1, Math.min(256, parseInt(val) || 1)));
+                  }
+                }}
+                onBlur={(e) => {
+                  if (e.target.value === '') {
+                    setWorkerThreads(1);
+                  }
+                }}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-300">Batch Size</label>
+              <input
+                type="number"
+                min="50"
+                max="10000"
+                value={batchSize}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setBatchSize('' as any);
+                  } else {
+                    setBatchSize(Math.max(50, Math.min(10000, parseInt(val) || 300)));
+                  }
+                }}
+                onBlur={(e) => {
+                  if (e.target.value === '') {
+                    setBatchSize(300);
+                  }
+                }}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <Button
+              onClick={handleUpdateConfig}
+              disabled={updating}
+              className="w-full"
+              variant={updateSuccess ? "success" : "primary"}
+            >
+              {updating ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Updating...
+                </>
+              ) : updateSuccess ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  Settings Applied!
+                </>
+              ) : (
+                <>
+                  <Settings className="w-4 h-4" />
+                  Apply Settings
+                </>
+              )}
+            </Button>
+
+            {updateSuccess && (
+              <Alert variant="success">
+                <CheckCircle2 className="w-4 h-4" />
+                <span className="text-sm">Configuration updated successfully! Restart mining to apply changes.</span>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Recommendations */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

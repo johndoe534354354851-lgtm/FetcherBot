@@ -91,70 +91,69 @@ function calculateRecommendations(specs: {
   // Absolute maximum: 20 threads (diminishing returns beyond this for most mining workloads)
   const ABSOLUTE_MAX_WORKERS = 20;
 
-  // Calculate max workers based on CPU count (can go higher than optimal for high-end systems)
-  let maxWorkers: number;
-  if (cpuCount >= 24) {
-    maxWorkers = Math.min(ABSOLUTE_MAX_WORKERS, Math.floor(cpuCount * 0.85)); // 85% for very high-end
-  } else if (cpuCount >= 16) {
-    maxWorkers = Math.min(ABSOLUTE_MAX_WORKERS, Math.floor(cpuCount * 0.8)); // 80% for high-end
-  } else if (cpuCount >= 8) {
-    maxWorkers = Math.floor(cpuCount * 0.75); // 75% for mid-range
-  } else {
-    maxWorkers = Math.max(4, cpuCount - 1); // Leave 1 core free for low-end
-  }
+  // Calculate max workers based on CPU count (use all cores)
+  const maxWorkers = cpuCount;
 
-  // Optimal workers (recommended for best balance of performance and stability)
-  let optimalWorkers: number;
-  if (cpuCount >= 24) {
-    optimalWorkers = Math.floor(cpuCount * 0.67); // ~67% for very high-end (16 workers for 24 cores)
-  } else if (cpuCount >= 16) {
-    optimalWorkers = Math.floor(cpuCount * 0.7); // 70% for high-end (11 workers for 16 cores)
-  } else if (cpuCount >= 8) {
-    optimalWorkers = Math.floor(cpuCount * 0.65); // 65% for mid-range (5-6 workers for 8 cores)
-  } else if (cpuCount >= 4) {
-    optimalWorkers = Math.max(2, cpuCount - 2); // Leave 2 cores free for low-end
-  } else {
-    optimalWorkers = Math.max(1, Math.floor(cpuCount * 0.5)); // 50% for very low-end
-  }
+  // Optimal workers (use all cores as optimal)
+  const optimalWorkers = cpuCount;
 
   // Conservative workers (for systems with other workloads running)
   const conservativeWorkers = Math.max(2, Math.floor(cpuCount * 0.5));
 
-  // Ensure optimal is never higher than max
-  optimalWorkers = Math.min(optimalWorkers, maxWorkers);
-
   // Ensure conservative is never higher than optimal
   const finalConservativeWorkers = Math.min(conservativeWorkers, optimalWorkers);
 
-  // Batch size recommendation
+  // Batch size recommendation - Dynamic scaling based on CPU cores
   // Rule: Larger batches = fewer API calls but more memory usage
-  // Base on CPU speed and memory
-  let optimalBatchSize = 300; // Default
-  let maxBatchSize = 500;
-  let conservativeBatchSize = 200;
+  // Scale batch size proportionally to CPU cores for optimal performance
 
-  // Adjust based on CPU cores and speed
-  if (cpuCount >= 12 && cpuSpeed >= 2500 && totalMemoryGB >= 16) {
-    // High-end system
-    optimalBatchSize = 400;
-    maxBatchSize = 600;
-    conservativeBatchSize = 300;
-  } else if (cpuCount >= 8 && cpuSpeed >= 2000 && totalMemoryGB >= 8) {
-    // Mid-range system
-    optimalBatchSize = 350;
-    maxBatchSize = 500;
-    conservativeBatchSize = 250;
-  } else if (cpuCount >= 4 && totalMemoryGB >= 4) {
-    // Entry-level system
-    optimalBatchSize = 250;
-    maxBatchSize = 350;
-    conservativeBatchSize = 150;
-  } else {
-    // Low-end system
-    optimalBatchSize = 150;
-    maxBatchSize = 250;
-    conservativeBatchSize = 100;
+  // Base calculation: Scale with core count
+  // Formula: 200 base + (cores * 30) for linear scaling
+  // 4 cores  = 200 + 120  = 320
+  // 12 cores = 200 + 360  = 560
+  // 24 cores = 200 + 720  = 920
+  // 64 cores = 200 + 1920 = 2120
+  let optimalBatchSize = 200 + (cpuCount * 30);
+
+  // Apply CPU speed multiplier
+  let speedMultiplier = 1.0;
+  if (cpuSpeed >= 3500) {
+    speedMultiplier = 1.25; // Very fast CPUs
+  } else if (cpuSpeed >= 3000) {
+    speedMultiplier = 1.15; // Fast CPUs can handle larger batches
+  } else if (cpuSpeed >= 2500) {
+    speedMultiplier = 1.05;
+  } else if (cpuSpeed < 2000) {
+    speedMultiplier = 0.85; // Slower CPUs need smaller batches
   }
+
+  // Apply memory constraint multiplier
+  let memoryMultiplier = 1.0;
+  if (totalMemoryGB >= 64) {
+    memoryMultiplier = 1.2; // Massive RAM
+  } else if (totalMemoryGB >= 32) {
+    memoryMultiplier = 1.15; // Lots of RAM can handle larger batches
+  } else if (totalMemoryGB >= 16) {
+    memoryMultiplier = 1.05;
+  } else if (totalMemoryGB < 8) {
+    memoryMultiplier = 0.8; // Limited RAM needs smaller batches
+  } else if (totalMemoryGB < 4) {
+    memoryMultiplier = 0.6; // Very limited RAM
+  }
+
+  // Calculate final optimal with multipliers
+  optimalBatchSize = Math.round(optimalBatchSize * speedMultiplier * memoryMultiplier);
+
+  // Calculate max (1.8x optimal) and conservative (0.65x optimal)
+  let maxBatchSize = Math.round(optimalBatchSize * 1.8);
+  let conservativeBatchSize = Math.round(optimalBatchSize * 0.65);
+
+  // Apply absolute bounds to prevent extreme values
+  // Min: 150 (even 2-core systems need some batch)
+  // Max: 4000 (prevents excessive challenge staleness)
+  optimalBatchSize = Math.max(150, Math.min(3000, optimalBatchSize));
+  maxBatchSize = Math.max(250, Math.min(4000, maxBatchSize));
+  conservativeBatchSize = Math.max(100, Math.min(2000, conservativeBatchSize));
 
   // System tier classification
   let systemTier: 'low-end' | 'entry-level' | 'mid-range' | 'high-end';

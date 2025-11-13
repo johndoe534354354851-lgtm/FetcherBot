@@ -1,5 +1,15 @@
 # Git attributes for Midnight Fetcher Bot
 
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Ensure shell scripts always have LF line endings (Unix style)
+*.sh text eol=lf
+
+# Ensure batch files always have CRLF line endings (Windows style)
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # Ensure Windows executables are treated as binary files
 *.exe binary
 

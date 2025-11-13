@@ -143,8 +143,8 @@ export class HashClient {
           { preimages },
           {
             timeout: batchTimeout,
-            // Don't use keep-alive agent for large batch requests to avoid connection reuse issues
-            httpAgent: new (require('http').Agent)({ keepAlive: false })
+            // Use the persistent keep-alive connection pool for maximum performance
+            // The pool is sized at 200 connections to handle many parallel workers
           }
         );
         return response.data.hashes;

@@ -256,7 +256,7 @@ export class WalletManager {
       accountIndex: addressIndex,
     });
 
-    const message = `donate_to:${destinationAddress}`;
+    const message = `Assign accumulated Scavenger rights to: ${destinationAddress}`;
     const payload = toHex(Buffer.from(message, 'utf8'));
     const signedMessage = await lucid.wallet.signMessage(sourceAddress, payload);
 

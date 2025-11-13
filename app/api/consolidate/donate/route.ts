@@ -4,62 +4,38 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { WalletManager } from '@/lib/wallet/manager';
 import axios from 'axios';
+import { consolidationLogger } from '@/lib/storage/consolidation-logger';
 
 const API_BASE = 'https://scavenger.prod.gd.midnighttge.io';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { password, sourceIndex, destinationIndex } = body;
+    const { sourceAddress, destinationAddress, signature, sourceIndex, destinationIndex, destinationMode } = body;
 
-    if (!password || sourceIndex === undefined || destinationIndex === undefined) {
+    if (!sourceAddress || !destinationAddress || !signature) {
       return NextResponse.json(
-        { error: 'Missing required fields: password, sourceIndex, destinationIndex' },
-        { status: 400 }
-      );
-    }
-
-    const walletManager = new WalletManager();
-
-    // Load wallet with password
-    const addresses = await walletManager.loadWallet(password);
-
-    const sourceAddr = addresses.find(a => a.index === sourceIndex);
-    const destinationAddr = addresses.find(a => a.index === destinationIndex);
-
-    if (!sourceAddr || !destinationAddr) {
-      return NextResponse.json(
-        { error: 'Invalid source or destination address index' },
+        { error: 'Missing required fields: sourceAddress, destinationAddress, signature' },
         { status: 400 }
       );
     }
 
     // Skip if source and destination are the same
-    if (sourceIndex === destinationIndex) {
+    if (sourceAddress === destinationAddress) {
       return NextResponse.json(
         { error: 'Source and destination cannot be the same' },
         { status: 400 }
       );
     }
 
-    // Create donation signature
-    const signature = await walletManager.makeDonationSignature(
-      sourceIndex,
-      sourceAddr.bech32,
-      destinationAddr.bech32
-    );
-
     // POST /donate_to/{destination}/{source}/{signature}
-    const url = `${API_BASE}/donate_to/${destinationAddr.bech32}/${sourceAddr.bech32}/${signature}`;
+    const url = `${API_BASE}/donate_to/${destinationAddress}/${sourceAddress}/${signature}`;
 
     console.log('[Consolidate API] Making donation request:', {
       url,
-      sourceIndex,
-      destinationIndex,
-      sourceAddress: sourceAddr.bech32,
-      destinationAddress: destinationAddr.bech32,
+      sourceAddress,
+      destinationAddress,
     });
 
     try {
@@ -76,12 +52,26 @@ export async function POST(request: NextRequest) {
 
       if (response.status >= 200 && response.status < 300) {
         console.log('[Consolidate API] ✓ Success:', response.data);
+
+        // Log successful consolidation
+        consolidationLogger.logConsolidation({
+          ts: new Date().toISOString(),
+          sourceAddress,
+          sourceIndex,
+          destinationAddress,
+          destinationIndex,
+          destinationMode: destinationMode || 'wallet',
+          solutionsConsolidated: response.data.solutions_consolidated || 0,
+          message: response.data.message || 'Rewards consolidated successfully',
+          status: 'success',
+        });
+
         return NextResponse.json({
           success: true,
           message: response.data.message || 'Rewards consolidated successfully',
           solutionsConsolidated: response.data.solutions_consolidated || 0,
-          sourceAddress: sourceAddr.bech32,
-          destinationAddress: destinationAddr.bech32,
+          sourceAddress,
+          destinationAddress,
         });
       } else {
         console.error('[Consolidate API] ✗ Server rejected consolidation:', {
@@ -90,6 +80,20 @@ export async function POST(request: NextRequest) {
           responseData: response.data,
           message: response.data.message,
           fullResponse: JSON.stringify(response.data, null, 2),
+        });
+
+        // Log failed consolidation
+        consolidationLogger.logConsolidation({
+          ts: new Date().toISOString(),
+          sourceAddress,
+          sourceIndex,
+          destinationAddress,
+          destinationIndex,
+          destinationMode: destinationMode || 'wallet',
+          solutionsConsolidated: 0,
+          message: response.data.message,
+          status: 'failed',
+          error: response.data.message || 'Server rejected consolidation request',
         });
 
         return NextResponse.json(
@@ -116,6 +120,19 @@ export async function POST(request: NextRequest) {
           code: axiosError.code,
           response: axiosError.response?.data,
         }, null, 2),
+      });
+
+      // Log failed consolidation
+      consolidationLogger.logConsolidation({
+        ts: new Date().toISOString(),
+        sourceAddress,
+        sourceIndex,
+        destinationAddress,
+        destinationIndex,
+        destinationMode: destinationMode || 'wallet',
+        solutionsConsolidated: 0,
+        status: 'failed',
+        error: errorMsg,
       });
 
       return NextResponse.json(

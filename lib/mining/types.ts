@@ -18,6 +18,7 @@ export interface MiningStats {
   solutionsFound: number;
   registeredAddresses: number;
   totalAddresses: number;
+  addressesWithReceipts: number; // Unique addresses that have found at least one solution
   hashRate: number;
   uptime: number;
   startTime: number | null;
@@ -28,6 +29,12 @@ export interface MiningStats {
   solutionsToday: number; // Solutions found today (since midnight)
   solutionsYesterday: number; // Solutions found yesterday
   workerThreads: number; // Number of parallel mining threads
+  config: {
+    workerThreads: number;
+    batchSize: number;
+    workerGroupingMode: 'auto' | 'all-on-one' | 'grouped';
+    workersPerAddress: number;
+  };
 }
 
 export interface SolutionEvent {
@@ -118,6 +125,7 @@ export interface WorkerUpdateEvent {
   hashesComputed: number;
   hashRate: number;
   solutionsFound: number;
+  startTime: number;
   status: 'idle' | 'mining' | 'submitting' | 'completed';
   currentChallenge: string | null;
 }

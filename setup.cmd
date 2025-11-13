@@ -26,7 +26,7 @@ if %errorLevel% neq 0 (
     echo WARNING: Running without administrator privileges.
     echo Some installations may require elevated permissions.
     echo.
-    pause
+    REM Auto-continuing - script will pause only if actual errors occur
 )
 
 REM ============================================================================
