@@ -93,6 +93,7 @@ interface HistoryData {
     totalSolutions: number;
     totalErrors: number;
     successRate: string;
+    recentFailureCount?: number; // Failures in the last 24 hours
   };
 }
 
@@ -216,6 +217,12 @@ function MiningDashboardContent() {
   const [devFeeData, setDevFeeData] = useState<any | null>(null);
   const [historyLastRefresh, setHistoryLastRefresh] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(Date.now());
+
+  // Retry failed submissions state
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryResult, setRetryResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
+  const [retryAllResult, setRetryAllResult] = useState<{ succeeded: number; failed: number } | null>(null);
 
   // Diagnostics state
   const [diagnosticsRunning, setDiagnosticsRunning] = useState(false);
@@ -844,6 +851,71 @@ function MiningDashboardContent() {
       console.error('Failed to fetch history:', err);
     } finally {
       setHistoryLoading(false);
+    }
+  };
+
+  // Retry a single failed submission
+  const retryFailure = async (error: ErrorEntry) => {
+    const retryId = `${error.address}:${error.challenge_id}:${error.nonce}`;
+    setRetryingId(retryId);
+    setRetryResult(null);
+
+    try {
+      const response = await fetch('/api/mining/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: error.address,
+          challengeId: error.challenge_id,
+          nonce: error.nonce,
+          hash: error.hash,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setRetryResult({ id: retryId, success: true, message: 'Solution resubmitted successfully!' });
+        // Refresh history to update the list
+        await fetchHistory();
+      } else {
+        setRetryResult({ id: retryId, success: false, message: data.error || 'Retry failed' });
+      }
+    } catch (err: any) {
+      setRetryResult({ id: retryId, success: false, message: err.message || 'Network error' });
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  // Retry all failed submissions from the last 24 hours
+  const retryAllFailures = async () => {
+    setRetryingAll(true);
+    setRetryAllResult(null);
+
+    try {
+      const response = await fetch('/api/mining/retry-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setRetryAllResult({
+          succeeded: data.summary?.succeeded || 0,
+          failed: data.summary?.failed || 0,
+        });
+        // Refresh history to update the list
+        await fetchHistory();
+      } else {
+        setRetryAllResult({ succeeded: 0, failed: -1 }); // -1 indicates error
+      }
+    } catch (err: any) {
+      console.error('Retry all failed:', err);
+      setRetryAllResult({ succeeded: 0, failed: -1 });
+    } finally {
+      setRetryingAll(false);
     }
   };
 
@@ -1759,6 +1831,47 @@ function MiningDashboardContent() {
                           <p className="text-4xl font-bold text-white mt-1">{history.summary.totalErrors}</p>
                         </div>
                       </div>
+                      {/* Retry All Button - shows when there are recent failures */}
+                      {(history.summary.recentFailureCount || 0) > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-700">
+                          <button
+                            onClick={retryAllFailures}
+                            disabled={retryingAll}
+                            className={cn(
+                              'w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-sm font-medium transition-colors',
+                              retryingAll
+                                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                : 'bg-orange-600 hover:bg-orange-500 text-white'
+                            )}
+                          >
+                            {retryingAll ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Retrying...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-4 h-4" />
+                                Retry All ({history.summary.recentFailureCount} from last 24h)
+                              </>
+                            )}
+                          </button>
+                          {retryAllResult && (
+                            <div className="mt-2 p-2 rounded text-xs bg-gray-800 text-center">
+                              {retryAllResult.failed === -1 ? (
+                                <span className="text-red-400">Retry failed - check console</span>
+                              ) : (
+                                <>
+                                  <span className="text-green-400">{retryAllResult.succeeded} succeeded</span>
+                                  {retryAllResult.failed > 0 && (
+                                    <span className="text-red-400 ml-2">{retryAllResult.failed} failed</span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -2027,23 +2140,64 @@ function MiningDashboardContent() {
                       <div>
                         <h3 className="text-lg font-semibold text-white mb-3">Failure Log</h3>
                         <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                          {selectedAddressHistory.failures.map((failure, idx) => (
-                            <div key={idx} className="p-3 bg-red-900/10 border border-red-700/50 rounded-lg">
-                              <div className="flex items-start justify-between gap-4 mb-2">
-                                <span className="text-xs text-gray-400">{formatDate(failure.ts)}</span>
-                                <span className="text-xs text-gray-500 font-mono">Nonce: {failure.nonce}</span>
-                              </div>
-                              <div className="text-sm text-red-300">
-                                <span className="text-red-400 font-semibold">Error: </span>
-                                {failure.error}
-                              </div>
-                              {failure.hash && (
-                                <div className="text-xs text-gray-500 font-mono mt-1">
-                                  Hash: {failure.hash}
+                          {selectedAddressHistory.failures.map((failure, idx) => {
+                            const retryId = `${selectedAddressHistory.address}:${selectedAddressHistory.challengeId}:${failure.nonce}`;
+                            const isRetrying = retryingId === retryId;
+                            const result = retryResult?.id === retryId ? retryResult : null;
+
+                            return (
+                              <div key={idx} className="p-3 bg-red-900/10 border border-red-700/50 rounded-lg">
+                                <div className="flex items-start justify-between gap-4 mb-2">
+                                  <span className="text-xs text-gray-400">{formatDate(failure.ts)}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-gray-500 font-mono">Nonce: {failure.nonce}</span>
+                                    {/* Retry Button */}
+                                    <button
+                                      onClick={() => retryFailure({
+                                        ts: failure.ts,
+                                        address: selectedAddressHistory.address,
+                                        challenge_id: selectedAddressHistory.challengeId,
+                                        nonce: failure.nonce,
+                                        hash: failure.hash,
+                                        error: failure.error,
+                                      })}
+                                      disabled={isRetrying}
+                                      className={cn(
+                                        'px-2 py-1 rounded text-xs font-medium transition-colors',
+                                        isRetrying
+                                          ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                          : 'bg-orange-600 hover:bg-orange-500 text-white'
+                                      )}
+                                    >
+                                      {isRetrying ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          ))}
+                                <div className="text-sm text-red-300">
+                                  <span className="text-red-400 font-semibold">Error: </span>
+                                  {failure.error}
+                                </div>
+                                {failure.hash && (
+                                  <div className="text-xs text-gray-500 font-mono mt-1">
+                                    Hash: {failure.hash}
+                                  </div>
+                                )}
+                                {/* Show retry result for this specific failure */}
+                                {result && (
+                                  <div className={cn(
+                                    'mt-2 p-2 rounded text-xs',
+                                    result.success ? 'bg-green-900/30 text-green-400' : 'bg-red-900/30 text-red-400'
+                                  )}>
+                                    {result.message}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
