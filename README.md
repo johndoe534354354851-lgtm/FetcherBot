@@ -40,10 +40,15 @@ This software includes a small development fee to support ongoing maintenance an
 **Prerequisites:**
 - Windows 10/11
 - Internet connection
+- Git (optional but recommended for easy updates)
 
 **Steps:**
 
-1. **Download** this repository (or clone with git)
+1. **Clone the repository** (recommended) or download ZIP:
+   ```cmd
+   git clone https://github.com/ADA-Markets/FetcherBot.git
+   cd FetcherBot
+   ```
 
 2. **Run Setup** - Double-click `setup.cmd` or open Command Prompt and run:
    ```cmd
@@ -59,16 +64,29 @@ This software includes a small development fee to support ongoing maintenance an
 
 4. **Access the app** at `http://localhost:3001`
 
+5. **Update to latest version** (when updates are released):
+   ```cmd
+   git pull
+   setup.cmd
+   ```
+
 ### Ubuntu/Linux Server Installation
 
 **Prerequisites:**
 - Ubuntu 20.04+ (or compatible Linux distribution)
 - SSH access with sudo privileges
 - Internet connection
+- Git (recommended for easy updates)
 
 **Steps:**
 
-1. **Download and extract** the repository:
+1. **Clone the repository** (recommended):
+   ```bash
+   git clone https://github.com/ADA-Markets/FetcherBot.git
+   cd FetcherBot
+   ```
+
+   Or download ZIP if git is not available:
    ```bash
    wget https://github.com/ADA-Markets/FetcherBot/archive/main.zip
    unzip main.zip
@@ -106,8 +124,15 @@ This software includes a small development fee to support ongoing maintenance an
    ./logs.sh         # View live logs
    ```
 
-   **CPU Thread Configuration:** Scripts auto-detect CPU cores by default (max 32).
+   **CPU Thread Configuration:** Scripts auto-detect all available CPU cores.
    Override with: `./start.sh 24` or `WORKERS=24 ./start.sh`
+
+5. **Update to latest version** (when updates are released):
+   ```bash
+   ./stop.sh                    # Stop services first
+   git pull                     # Pull latest changes
+   ./setup.sh                   # Rebuild (or ./start.sh if no hash engine changes)
+   ```
 
 **Firewall Configuration** (if needed):
 ```bash
