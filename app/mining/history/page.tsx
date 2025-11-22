@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
 import { Alert } from '@/components/ui/alert';
-import { ArrowLeft, CheckCircle2, XCircle, Calendar, TrendingUp, Loader2, Copy, Check } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle, Calendar, TrendingUp, Loader2, Copy, Check, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface CryptoReceipt {
@@ -51,6 +51,8 @@ export default function MiningHistory() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'success' | 'error'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryResult, setRetryResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetchHistory();
@@ -81,6 +83,43 @@ export default function MiningHistory() {
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+  };
+
+  const retrySubmission = async (errorEntry: ErrorEntry, id: string) => {
+    setRetryingId(id);
+    setRetryResult(null);
+
+    try {
+      const response = await fetch('/api/mining/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: errorEntry.address,
+          challengeId: errorEntry.challenge_id,
+          nonce: errorEntry.nonce,
+          hash: errorEntry.hash || '',
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setRetryResult({ id, success: true, message: 'Solution resubmitted successfully!' });
+        // Refresh history after successful retry
+        setTimeout(() => {
+          fetchHistory();
+          setRetryResult(null);
+        }, 2000);
+      } else {
+        setRetryResult({ id, success: false, message: data.error || 'Retry failed' });
+        setTimeout(() => setRetryResult(null), 5000);
+      }
+    } catch (err: any) {
+      setRetryResult({ id, success: false, message: err.message || 'Retry failed' });
+      setTimeout(() => setRetryResult(null), 5000);
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -316,7 +355,47 @@ export default function MiningHistory() {
                             ✓ Crypto receipt received
                           </div>
                         )}
+
+                        {/* Retry result message */}
+                        {retryResult && retryResult.id === `error-${index}` && (
+                          <div className={cn(
+                            'mt-2 p-2 rounded text-xs',
+                            retryResult.success
+                              ? 'bg-green-900/30 text-green-400'
+                              : 'bg-red-900/30 text-red-400'
+                          )}>
+                            {retryResult.success ? '✓ ' : '✗ '}{retryResult.message}
+                          </div>
+                        )}
                       </div>
+
+                      {/* Retry button for errors */}
+                      {entry.type === 'error' && (
+                        <div className="flex-shrink-0">
+                          <button
+                            onClick={() => retrySubmission(entry.data as ErrorEntry, `error-${index}`)}
+                            disabled={retryingId === `error-${index}`}
+                            className={cn(
+                              'flex items-center gap-2 px-3 py-2 rounded text-xs font-medium transition-colors',
+                              retryingId === `error-${index}`
+                                ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                : 'bg-orange-600 hover:bg-orange-500 text-white'
+                            )}
+                          >
+                            {retryingId === `error-${index}` ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Retrying...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-3 h-3" />
+                                Retry
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))

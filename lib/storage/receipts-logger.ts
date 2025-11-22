@@ -212,6 +212,47 @@ class ReceiptsLogger {
       return [];
     }
   }
+
+  /**
+   * Remove an error entry (called when retry is successful)
+   * Removes all errors matching the address, challengeId, and nonce
+   */
+  removeError(address: string, challengeId: string, nonce: string): void {
+    try {
+      if (!fs.existsSync(this.errorsFile)) {
+        return;
+      }
+
+      const content = fs.readFileSync(this.errorsFile, 'utf8');
+      const lines = content.trim().split('\n').filter(line => line.length > 0);
+
+      // Filter out the matching error(s)
+      const remainingLines = lines.filter(line => {
+        try {
+          const errorLog = JSON.parse(line);
+          // Remove if address, challenge_id, and nonce all match
+          const shouldRemove =
+            errorLog.address === address &&
+            errorLog.challenge_id === challengeId &&
+            errorLog.nonce === nonce;
+          return !shouldRemove;
+        } catch (e) {
+          // Keep malformed lines
+          return true;
+        }
+      });
+
+      // Rewrite the errors file
+      const newContent = remainingLines.length > 0
+        ? remainingLines.join('\n') + '\n'
+        : '';
+      fs.writeFileSync(this.errorsFile, newContent, 'utf8');
+
+      console.log(`[ReceiptsLogger] Removed error for ${address.slice(0, 20)}... (challenge: ${challengeId.slice(0, 16)}...)`);
+    } catch (error: any) {
+      console.error('[ReceiptsLogger] Failed to remove error:', error.message);
+    }
+  }
 }
 
 // Singleton instance
