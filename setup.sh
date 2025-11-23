@@ -31,12 +31,12 @@ echo ""
 # ============================================================================
 # Check for sudo privileges
 # ============================================================================
-if [ "$EUID" -eq 0 ]; then
-    echo "WARNING: Running as root is not recommended."
-    echo "Please run as a regular user. The script will prompt for sudo when needed."
-    echo ""
-    read -p "Press Enter to continue anyway or Ctrl+C to exit..."
-fi
+#if [ "$EUID" -eq 0 ]; then
+#    echo "WARNING: Running as root is not recommended."
+#    echo "Please run as a regular user. The script will prompt for sudo when needed."
+#    echo ""
+#    read -p "Press Enter to continue anyway or Ctrl+C to exit..."
+#fi
 
 # ============================================================================
 # Check Node.js
@@ -47,8 +47,8 @@ if ! command -v node &> /dev/null; then
     echo ""
 
     # Add NodeSource repository
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt-get install -y nodejs
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
 
     echo "Node.js installed!"
     node --version
@@ -64,8 +64,8 @@ else
         echo "ERROR: Node.js version is $NODE_VERSION.x but Next.js requires >= 20.9.0"
         echo ""
         echo "To upgrade, run:"
-        echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
-        echo "  sudo apt-get install -y nodejs"
+        echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"
+        echo "  apt-get install -y nodejs"
         echo ""
         read -p "Continue anyway? (y/N) " -n 1 -r
         echo ""
@@ -83,8 +83,8 @@ echo "[2/6] Checking build tools..."
 if ! command -v gcc &> /dev/null; then
     echo "C compiler (gcc) not found. Installing build-essential..."
     echo ""
-    sudo apt-get update
-    sudo apt-get install -y build-essential pkg-config libssl-dev
+    apt-get update
+    apt-get install -y build-essential pkg-config libssl-dev
     echo "Build tools installed!"
     echo ""
 else
