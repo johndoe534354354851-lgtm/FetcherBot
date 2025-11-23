@@ -103,7 +103,7 @@ if ! command -v cargo &> /dev/null; then
 
     # Execute local rustup script
     chmod +x ./rustup_init.sh
-    ./rustup_init.sh -y
+    ./rustup-init.sh -y
 
     # Load Rust environment for current session
     source "$HOME/.cargo/env"
