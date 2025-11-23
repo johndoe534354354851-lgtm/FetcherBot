@@ -102,7 +102,7 @@ if ! command -v cargo &> /dev/null; then
     echo ""
 
     # Execute local rustup script
-    chmod +x ./rustup_init.sh
+    chmod +x ./rustup-init.sh
     ./rustup-init.sh -y
 
     # Load Rust environment for current session
