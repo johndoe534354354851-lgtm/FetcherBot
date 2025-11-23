@@ -100,8 +100,14 @@ echo "[3/6] Checking Rust installation..."
 if ! command -v cargo &> /dev/null; then
     echo "Rust not found. Installing Rust..."
     echo ""
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+    # Execute local rustup script
+    chmod +x ./rustup_init.sh
+    ./rustup_init.sh -y
+
+    # Load Rust environment for current session
     source "$HOME/.cargo/env"
+
     echo "Rust installed!"
     cargo --version
     echo ""
